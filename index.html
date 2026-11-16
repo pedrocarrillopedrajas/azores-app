@@ -3,24 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#142b3a">
+  <meta name="theme-color" content="#163F36">
   <meta name="description" content="AZORES - Gestión de compraventa">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icon-192.png" type="image/png">
   <link rel="stylesheet" href="styles.css">
   <title>AZORES · Gestión</title>
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><div class="brand-mark">A</div><div><strong>AZORES</strong><small>GESTIÓN DE COMPRAVENTA</small></div></div>
-    <span class="prototype-tag">PROTOTIPO</span>
+    <div class="brand"><img class="brand-logo" src="logo-azores.jpg" alt="Logo AZORES"><div><strong>AZORES</strong><small>GESTIÓN DE COMPRAVENTA</small></div></div>
+    <span class="prototype-tag">GESTIÓN PRIVADA</span>
   </header>
-  <main class="shell">
+  <section id="loginPanel" class="login-panel">
+    <div class="login-card"><img class="login-logo" src="logo-azores.jpg" alt="Logo AZORES"><h1>Entrar en AZORES</h1>
+    <p>Accede con el usuario privado que creaste en Supabase.</p>
+    <form id="loginForm"><label>Correo electrónico<input type="email" name="email" autocomplete="username" required></label>
+    <label>Contraseña<input type="password" name="password" autocomplete="current-password" required></label>
+    <button class="primary" type="submit" id="loginButton">Entrar</button></form><p id="loginError" role="alert"></p></div>
+  </section>
+  <main class="shell" id="appShell" hidden>
+    <div class="cloud-bar"><span id="cloudStatus" role="status">Conectando…</span><div class="action-group"><button type="button" class="secondary" id="retrySync">Reintentar</button><button type="button" class="secondary" id="logoutButton">Cerrar sesión</button></div></div>
     <section class="welcome">
       <div><p class="eyebrow">TU NEGOCIO, EN ORDEN</p><h1>Panel principal</h1><p class="muted">Todo lo importante de AZORES, de un vistazo.</p></div>
       <button class="primary" id="newProductTop">＋ Añadir producto</button>
     </section>
-    <div class="notice"><strong>Almacenamiento local:</strong> los datos se guardan en este navegador y no se sincronizan. Descarga copias de seguridad regularmente y guárdalas fuera de esta carpeta.</div>
+    <div class="notice"><strong>Datos en Supabase:</strong> comprueba el indicador de sincronización antes de cerrar. Conserva copias JSON periódicas. Si dos dispositivos editan a la vez, el último guardado puede prevalecer.</div>
     <section class="backup-panel" aria-label="Protección de datos"><div><strong>Protección de datos</strong><p>Guarda una copia de todas las operaciones y cuentas, incluidas las fotos. Puedes restaurarla más adelante.</p></div><div class="action-group"><button type="button" class="primary" id="exportBackup">Descargar copia</button><button type="button" class="secondary" id="importBackup">Restaurar copia</button><input type="file" id="backupFile" accept=".json,application/json" hidden></div></section>
     <section class="stats" id="stats">
       <article class="stat"><span>Dinero disponible</span><strong id="cash">0,00 €</strong><small>Saldo conjunto de Vinted</small></article>
@@ -35,7 +43,7 @@
       </nav>
       <div id="view"></div>
     </section>
-    <footer>AZORES · Versión 7.5 · Diseñado para ordenador y móvil</footer>
+    <footer>AZORES · Versión 9.0 · Diseñado para ordenador y móvil</footer>
   </main>
   <dialog id="productDialog">
     <form id="productForm" method="dialog">

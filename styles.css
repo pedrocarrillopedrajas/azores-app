@@ -6,3 +6,30 @@
 .finance-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:18px}.finance-box{background:#f3f7f8;border:1px solid #dbe6e8;border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:8px}.finance-box small{color:#536a75}.finance-box strong{font-size:1.45rem;color:#142b3a}.simple-panel{margin-bottom:14px}.simple-panel input[type=checkbox]{width:auto;display:inline-block;margin-right:7px}
 
 .backup-panel{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;background:#fff;border:1px solid #d9e5e8;border-radius:13px;padding:16px 18px;margin-bottom:18px}.backup-panel p{margin:3px 0 0;color:#687780;font-size:12px}.backup-panel .action-group{flex-shrink:0}
+
+[hidden]{display:none!important}.login-panel{min-height:75vh;display:grid;place-items:center;padding:24px}.login-card{width:min(100%,410px);padding:30px;border:1px solid #d9e4e7;border-radius:18px;background:#fff;text-align:center;box-shadow:0 8px 24px #102c3b15}.login-card form{text-align:left;display:grid;gap:14px}.login-card label{display:grid;gap:6px}.login-card input{width:100%;padding:12px;border:1px solid #bbcbd1;border-radius:9px}.login-card button{width:100%}#loginError{color:#b42318;overflow-wrap:anywhere}.cloud-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;padding:12px 16px;border:1px solid #d9e4e7;border-radius:12px;background:#f4f8f9}#cloudStatus{font-size:14px;overflow-wrap:anywhere}
+
+
+/* AZORES V9 — identidad verde elegante */
+:root{--navy:#163F36;--blue:#8B7041;--bg:#F7F6F1;--ink:#1C332C;--muted:#65766F;--line:#E2E6DF;--white:#fff;--gold:#C6A76A}
+body{background:var(--bg);color:var(--ink)}
+.topbar{background:var(--navy);border-bottom:3px solid var(--gold)}
+.brand-logo{width:49px;height:49px;border-radius:50%;object-fit:cover;background:white;border:2px solid #D9C99E}
+.brand strong{color:#fff}.brand small{color:#E2D4AD}.prototype-tag{border-color:#9D8759;color:#E2D4AD}
+.login-logo{width:122px;height:122px;border-radius:50%;object-fit:cover;display:block;margin:0 auto 14px;border:3px solid var(--gold)}
+.login-card{border-color:var(--line);box-shadow:0 14px 35px #163F3615}
+.primary{background:var(--navy);color:white}.primary:hover{background:#245749}
+.secondary{background:#EBEEE7;color:var(--navy)}.secondary:hover{background:#DEE7DB}
+.eyebrow{color:#94743D}.stat,.content-card,.backup-panel,.login-card{border-color:var(--line)}
+.stat{border-top:3px solid var(--gold);box-shadow:0 3px 15px #163F3609}.stat strong,h1,h2{color:var(--navy)}
+.tabs button.active{background:#E5ECE3;color:var(--navy);box-shadow:inset 0 -2px var(--gold)}
+.tabs button:hover{background:#F0F2EC}.pill{background:#E5EEE5;color:#245749}
+.finance-box{background:#F5F7F2;border-color:#DCE6DC}.finance-box strong{color:var(--navy)}
+.cloud-bar{background:#F1F4ED;border-color:#DDE6D8}.notice{background:#FFF9EB;border-color:#EADCB9}
+input:focus,select:focus{outline:2px solid #C6A76A;border-color:#9C814B}
+.edit-product{color:var(--navy);border-color:#CAD7CB}.edit-product:hover{background:#EDF3EA}
+.sale-summary{background:#F1F5EF}.thumb{background:#E9EEE6;color:var(--navy)}
+dialog::backdrop{background:#102B2477}
+@media(max-width:760px){.brand-logo{width:43px;height:43px}.prototype-tag{font-size:8px;padding:4px 7px}}
+
+.delete-product{color:#9b2929;border-color:#d8b1b1}.delete-product:hover{background:#fff0ee}

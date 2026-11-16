@@ -1,9 +1,91 @@
+const SUPABASE_URL="https://lsuopaybsfdlofigxlac.supabase.co";
+const SUPABASE_KEY="sb_publishable_MEXZiitQlDx4lrh_vV4dag_8sbBKe7O";
+const SESSION_KEY="azores-cloud-session-v8";
+let cloudSession=null, cloudReady=false, cloudSaving=false, cloudDirty=false, cloudTimer=null;
+const cloudStatus=()=>document.getElementById("cloudStatus");
+function setCloudStatus(message){const el=cloudStatus();if(el)el.textContent=message;}
+function setCloudLock(locked){document.getElementById("appShell").hidden=locked;document.getElementById("loginPanel").hidden=!locked;}
+function cloudHeaders(token){return {"apikey":SUPABASE_KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json"};}
+async function refreshCloudSession(){
+ if(!cloudSession?.refresh_token)throw Error("Sesión caducada. Vuelve a entrar.");
+ const r=await fetch(SUPABASE_URL+"/auth/v1/token?grant_type=refresh_token",{method:"POST",headers:{"apikey":SUPABASE_KEY,"Content-Type":"application/json"},body:JSON.stringify({refresh_token:cloudSession.refresh_token})});
+ const j=await r.json();if(!r.ok)throw Error(j.msg||j.error_description||"No se pudo renovar la sesión");
+ cloudSession=j;localStorage.setItem(SESSION_KEY,JSON.stringify(j));return j;
+}
+async function cloudFetch(path,options={}){
+ let r=await fetch(SUPABASE_URL+path,{...options,headers:{...cloudHeaders(cloudSession.access_token),...(options.headers||{})}});
+ if(r.status===401){await refreshCloudSession();r=await fetch(SUPABASE_URL+path,{...options,headers:{...cloudHeaders(cloudSession.access_token),...(options.headers||{})}});}
+ if(!r.ok){let detail="";try{const j=await r.json();detail=j.message||j.msg||j.error_description||j.error||""}catch(_){}throw Error(detail||"Error de conexión ("+r.status+")");}
+ return r;
+}
+function queueCloudSave(){
+ if(!cloudReady)return;
+ cloudDirty=true;setCloudStatus("Cambios pendientes de sincronizar…");
+ clearTimeout(cloudTimer);cloudTimer=setTimeout(flushCloudSave,350);
+}
+async function flushCloudSave(){
+ if(!cloudReady||cloudSaving||!cloudDirty)return;
+ cloudSaving=true;cloudDirty=false;
+ const snapshot={products:JSON.parse(JSON.stringify(products)),finances:JSON.parse(JSON.stringify(finances))};
+ setCloudStatus("Guardando en la nube…");
+ try{
+  await cloudFetch("/rest/v1/azores_state?on_conflict=user_id",{method:"POST",headers:{"Prefer":"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({user_id:cloudSession.user.id,data:snapshot,updated_at:new Date().toISOString()})});
+  setCloudStatus(cloudDirty?"Cambios pendientes de sincronizar…":"✓ Sincronizado en Supabase");
+ }catch(e){cloudDirty=true;setCloudStatus("⚠ Sin sincronizar: "+e.message+". Pulsa Reintentar.");}
+ finally{cloudSaving=false;if(cloudDirty&&navigator.onLine&&cloudStatus()?.textContent?.startsWith("Cambios"))setTimeout(flushCloudSave,300);}
+}
+async function loadCloudState(){
+ cloudReady=false;setCloudStatus("Cargando datos…");
+ const r=await cloudFetch("/rest/v1/azores_state?select=data&user_id=eq."+encodeURIComponent(cloudSession.user.id));
+ const rows=await r.json();
+ if(rows.length){
+  const d=rows[0].data;
+  if(!d||!Array.isArray(d.products)||!d.finances||typeof d.finances!=="object")throw Error("Los datos de la nube no tienen el formato esperado");
+  products=d.products;finances=d.finances;
+ }else{
+  // Primera conexión: la cuenta parte vacía. Nunca importar datos locales de otro dispositivo automáticamente.
+  products=[];finances={opening:{Aurora:0,Pedro:0},contributions:[],withdrawals:[],capitalRepayments:[]};
+ }
+ finances.opening||={Aurora:0,Pedro:0};finances.contributions||=[];finances.withdrawals||=[];finances.capitalRepayments||=[];
+ localStorage.setItem(KEY,JSON.stringify(products));localStorage.setItem(FIN_KEY,JSON.stringify(finances));
+ cloudReady=true;render();setCloudLock(false);setCloudStatus("✓ Conectado a Supabase");
+}
+async function startCloud(){
+ try{
+  const saved=localStorage.getItem(SESSION_KEY);if(!saved)return;
+  cloudSession=JSON.parse(saved);if(!cloudSession?.user?.id)throw Error("Sesión inválida");
+  await refreshCloudSession();await loadCloudState();
+ }catch(e){cloudReady=false;setCloudLock(true);document.getElementById("loginError").textContent="Inicia sesión para acceder a AZORES. "+e.message;}
+}
+function signOutCloud(){
+ if(cloudDirty||cloudSaving){alert("Hay cambios sin sincronizar. Reintenta la sincronización antes de salir.");return;}
+ cloudReady=false;cloudSession=null;localStorage.removeItem(SESSION_KEY);
+ products=[];finances={opening:{Aurora:0,Pedro:0},contributions:[],withdrawals:[],capitalRepayments:[]};
+ localStorage.removeItem(KEY);localStorage.removeItem(FIN_KEY);setCloudLock(true);
+ document.getElementById("loginForm").reset();document.getElementById("loginError").textContent="";
+}
+document.getElementById("loginForm").addEventListener("submit",async e=>{
+ e.preventDefault();const button=document.getElementById("loginButton"),error=document.getElementById("loginError");
+ button.disabled=true;error.textContent="Conectando…";
+ try{
+  const form=new FormData(e.currentTarget);
+  const r=await fetch(SUPABASE_URL+"/auth/v1/token?grant_type=password",{method:"POST",headers:{"apikey":SUPABASE_KEY,"Content-Type":"application/json"},body:JSON.stringify({email:String(form.get("email")||"").trim(),password:String(form.get("password")||"")})});
+  const j=await r.json();if(!r.ok)throw Error(j.error_description||j.msg||j.error||"Correo o contraseña incorrectos");
+  cloudSession=j;localStorage.setItem(SESSION_KEY,JSON.stringify(j));await loadCloudState();error.textContent="";
+ }catch(err){error.textContent=err.message;cloudReady=false;setCloudLock(true);}
+ finally{button.disabled=false;}
+});
+document.getElementById("logoutButton").addEventListener("click",signOutCloud);
+document.getElementById("retrySync").addEventListener("click",()=>{if(!cloudReady)return;cloudDirty=true;flushCloudSave()});
+window.addEventListener("online",()=>{if(cloudDirty)flushCloudSave()});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&cloudDirty)flushCloudSave()});
+setCloudLock(true);startCloud();
 const KEY="azores-prototype-products-v1";
 let products=JSON.parse(localStorage.getItem(KEY)||"[]");
 const FIN_KEY="azores-finances-v7";
 let finances=JSON.parse(localStorage.getItem(FIN_KEY)||'{"opening":{"Aurora":0,"Pedro":0},"contributions":[],"withdrawals":[]}');
 finances.opening ||= {Aurora:0,Pedro:0};finances.contributions ||= [];finances.withdrawals ||= [];finances.capitalRepayments ||= [];
-function saveFin(){localStorage.setItem(FIN_KEY,JSON.stringify(finances));render()}
+function saveFin(){localStorage.setItem(FIN_KEY,JSON.stringify(finances));render();queueCloudSave()}
 function normalizedAccount(v){return /aurora|auro/i.test(v||"")?"Aurora":/pedro/i.test(v||"")?"Pedro":null}
 function purchaseMethod(p){return p.purchaseMethod||"Vinted"}
 function receiver(p){return normalizedAccount(p.receivingAccount||p.account)}
@@ -31,7 +113,7 @@ function financesSummary(){
 let activeTab="Inventario", photoData="", editingId=null, editingSaleId=null, editingShipmentId=null;
 const $=s=>document.querySelector(s);
 const money=n=>(Number(n)||0).toLocaleString("es-ES",{style:"currency",currency:"EUR"});
-function save(){localStorage.setItem(KEY,JSON.stringify(products));render()}
+function save(){localStorage.setItem(KEY,JSON.stringify(products));render();queueCloudSave()}
 function stats(){
  const stock=products.filter(p=>!isSold(p)).length;
  const sold=products.filter(isSold).length;
@@ -47,14 +129,14 @@ function render(){
  if(activeTab==="Compras"||activeTab==="Inventario"){
    const rows=products.filter(p=>activeTab==="Compras"||!isSold(p));
    if(!rows.length){view.innerHTML=`<div class="empty"><div class="symbol">▧</div><h3>${activeTab==="Compras"?"Todavía no hay compras":"Tu inventario está vacío"}</h3><p>Añade el primer producto para empezar a organizar AZORES.</p><button class="primary" id="emptyAdd">＋ Añadir producto</button></div>`;$("#emptyAdd").onclick=()=>openDialog();return}
-   view.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Compra</th><th>Coste</th><th>Cuenta</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="product-cell">${p.photo?`<img class="thumb" src="${p.photo}">`:`<span class="thumb">▧</span>`}<strong>${esc(p.name)}</strong></div></td><td>${p.purchaseDate||"—"}</td><td>${money(p.purchasePrice)}</td><td>${esc(p.account||"—")}</td><td><span class="pill">${esc(productStatus(p))}</span></td><td><div class="action-group"><button type="button" class="edit-product" data-edit="${esc(p.id)}">Editar</button>${!isSold(p)?`<button type="button" class="edit-product" data-sell="${esc(p.id)}">Vender</button>`:""}</div></td></tr>`).join("")}</tbody></table></div>`;
+   view.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Compra</th><th>Coste</th><th>Cuenta</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="product-cell">${p.photo?`<img class="thumb" src="${p.photo}">`:`<span class="thumb">▧</span>`}<strong>${esc(p.name)}</strong></div></td><td>${p.purchaseDate||"—"}</td><td>${money(p.purchasePrice)}</td><td>${esc(p.account||"—")}</td><td><span class="pill">${esc(productStatus(p))}</span></td><td><div class="action-group"><button type="button" class="edit-product" data-edit="${esc(p.id)}">Editar</button>${!isSold(p)?`<button type="button" class="edit-product" data-sell="${esc(p.id)}">Vender</button><button type="button" class="edit-product delete-product" data-delete="${esc(p.id)}" aria-label="Eliminar compra de ${esc(p.name)}">Eliminar</button>`:""}</div></td></tr>`).join("")}</tbody></table></div>`;
  }else if(activeTab==="Ventas"){
    const sold=products.filter(isSold);
-   view.innerHTML=`<div class="action-group" style="margin-bottom:14px"><button class="primary" id="addSale" ${products.some(p=>!isSold(p))?"":"disabled"}>＋ Registrar venta</button></div>${sold.length?`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Fecha</th><th>Precio venta</th><th>Comprador</th><th>Cobro</th><th>Beneficio</th><th>Acciones</th></tr></thead><tbody>${sold.map(p=>`<tr><td class="sale-product">${esc(p.name)}</td><td>${esc(p.saleDate||"—")}</td><td>${money(p.salePrice)}</td><td>${esc(p.buyer||"—")}</td><td><span class="pill">${esc(p.paymentStatus||"—")}</span></td><td>${money(Number(p.salePrice)-Number(p.purchasePrice||0))}</td><td><div class="action-group"><button class="edit-product" data-sale-edit="${esc(p.id)}">Editar venta</button><button class="edit-product" data-sale-cancel="${esc(p.id)}">Anular venta</button></div></td></tr>`).join("")}</tbody></table></div>`:`<div class="simple-panel"><strong>Aún no hay ventas</strong><p>Cuando vendas un producto, selecciónalo desde Inventario o pulsa Registrar venta.</p></div>`}`;
+   view.innerHTML=`<div class="action-group" style="margin-bottom:14px"><button class="primary" id="addSale" ${products.some(p=>!isSold(p))?"":"disabled"}>＋ Registrar venta</button></div>${sold.length?`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Fecha</th><th>Precio venta</th><th>Comprador</th><th>Cobro</th><th>Beneficio</th><th>Acciones</th></tr></thead><tbody>${sold.map(p=>`<tr><td class="sale-product"><div class="product-cell">${p.photo?`<img class="thumb" src="${p.photo}" alt="Foto de ${esc(p.name)}" loading="lazy">`:`<span class="thumb" aria-hidden="true">▧</span>`}<strong>${esc(p.name)}</strong></div></td><td>${esc(p.saleDate||"—")}</td><td>${money(p.salePrice)}</td><td>${esc(p.buyer||"—")}</td><td><span class="pill">${esc(p.paymentStatus||"—")}</span></td><td>${money(Number(p.salePrice)-Number(p.purchasePrice||0))}</td><td><div class="action-group"><button class="edit-product" data-sale-edit="${esc(p.id)}">Editar venta</button><button class="edit-product" data-sale-cancel="${esc(p.id)}">Anular venta</button></div></td></tr>`).join("")}</tbody></table></div>`:`<div class="simple-panel"><strong>Aún no hay ventas</strong><p>Cuando vendas un producto, selecciónalo desde Inventario o pulsa Registrar venta.</p></div>`}`;
    const add=$("#addSale");if(add)add.onclick=()=>openSaleDialog();
  }else if(activeTab==="Envíos"){
-   const sold=products.filter(isSold);
-   view.innerHTML=sold.length?`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Comprador</th><th>Transportista</th><th>Nº seguimiento</th><th>Seguimiento</th><th>Acciones</th></tr></thead><tbody>${sold.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.buyer||"—")}</td><td>${esc(p.shipping?.carrier||"—")}</td><td>${esc(p.shipping?.trackingNumber||"—")}</td><td>${safeTrackingLink(p.shipping?.trackingUrl)}</td><td><button type="button" class="edit-product" data-ship-edit="${esc(p.id)}">Editar envío</button></td></tr>`).join("")}</tbody></table></div>`:`<div class="simple-panel"><strong>Aún no hay envíos</strong><p>Al registrar una venta, su envío aparecerá automáticamente aquí.</p></div>`;
+   const sold=products.filter(p=>isSold(p)&&p.paymentStatus!=="Cobrado");
+   view.innerHTML=sold.length?`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Comprador</th><th>Transportista</th><th>Nº seguimiento</th><th>Seguimiento</th><th>Acciones</th></tr></thead><tbody>${sold.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.buyer||"—")}</td><td>${esc(p.shipping?.carrier||"—")}</td><td>${esc(p.shipping?.trackingNumber||"—")}</td><td>${safeTrackingLink(p.shipping?.trackingUrl)}</td><td><button type="button" class="edit-product" data-ship-edit="${esc(p.id)}">Editar envío</button></td></tr>`).join("")}</tbody></table></div>`:`<div class="simple-panel"><strong>No hay envíos pendientes de cobro</strong><p>Los pedidos pendientes de cobro aparecerán aquí automáticamente.</p></div>`;
  }else if(activeTab==="Cuentas"){
    const f=financesSummary();
    view.innerHTML=`<div class="finance-grid">
@@ -107,7 +189,17 @@ function openDialog(id=null){
 $("#newProduct").onclick=()=>openDialog();$("#newProductTop").onclick=()=>openDialog();$("#closeDialog").onclick=()=>dialog.close();$("#cancelDialog").onclick=()=>dialog.close();
 document.querySelectorAll("[data-tab]").forEach(b=>b.addEventListener("click",()=>{activeTab=b.dataset.tab;render()}));
 $("#productForm [name=photo]").addEventListener("change",e=>{const f=e.target.files[0];if(!f)return;const reader=new FileReader();reader.onload=()=>{photoData=reader.result;$("#photoPreview").innerHTML=`<img src="${photoData}" alt="Vista previa">`};reader.readAsDataURL(f)});
-$("#view").addEventListener("click",e=>{const b=e.target.closest("[data-edit]");if(b)openDialog(b.dataset.edit);const sell=e.target.closest("[data-sell]");if(sell)openSaleDialog(sell.dataset.sell);const editSale=e.target.closest("[data-sale-edit]");if(editSale)openSaleDialog(editSale.dataset.saleEdit,true);const cancel=e.target.closest("[data-sale-cancel]");if(cancel)cancelSale(cancel.dataset.saleCancel);const ship=e.target.closest("[data-ship-edit]");if(ship)openShippingDialog(ship.dataset.shipEdit)});
+$("#view").addEventListener("click",e=>{const b=e.target.closest("[data-edit]");if(b)openDialog(b.dataset.edit);const sell=e.target.closest("[data-sell]");if(sell)openSaleDialog(sell.dataset.sell);const editSale=e.target.closest("[data-sale-edit]");if(editSale)openSaleDialog(editSale.dataset.saleEdit,true);const cancel=e.target.closest("[data-sale-cancel]");if(cancel)cancelSale(cancel.dataset.saleCancel);const ship=e.target.closest("[data-ship-edit]");if(ship)openShippingDialog(ship.dataset.shipEdit);const del=e.target.closest("[data-delete]");if(del)deletePurchase(del.dataset.delete)});
+function deletePurchase(id){
+ if(!cloudReady){alert("Espera a que se conecte Supabase antes de eliminar una compra.");return;}
+ if(cloudDirty||cloudSaving){alert("Hay cambios pendientes de sincronizar. Espera a que aparezca 'Sincronizado en Supabase' antes de eliminar.");return;}
+ const p=products.find(x=>x.id===id);
+ if(!p)return;
+ if(isSold(p)){alert("Esta compra tiene una venta registrada. Primero anula la venta si realmente quieres eliminar la compra.");return;}
+ if(!confirm(`¿Eliminar definitivamente la compra de "${p.name}"?\n\nSe quitará también del inventario y se recalcularán las cuentas. Esta acción no se puede deshacer desde la aplicación.\n\n¿Quieres continuar?`))return;
+ products=products.filter(x=>x.id!==id);
+ save();
+}
 $("#productForm").addEventListener("submit",e=>{
  e.preventDefault();const f=new FormData(e.currentTarget);
  const fields={name:f.get("name"),purchaseDate:f.get("purchaseDate"),purchasePrice:f.get("purchasePrice"),origin:f.get("origin"),account:f.get("account"),purchaseMethod:f.get("purchaseMethod"),status:editingId&&products.find(x=>x.id===editingId)&&isSold(products.find(x=>x.id===editingId))?"Vendido":f.get("status"),photo:photoData};
@@ -205,7 +297,7 @@ if("serviceWorker" in navigator && location.protocol.startsWith("http")) navigat
  function validProduct(p){return p&&typeof p==="object"&&!Array.isArray(p)&&typeof p.id==="string"&&p.id.length>0&&typeof p.name==="string"&&Number.isFinite(Number(p.purchasePrice??0));}
  exportButton.addEventListener("click",()=>{
   try{
-   const data={format:backupFormat,exportedAt:new Date().toISOString(),products:JSON.parse(localStorage.getItem(KEY)||"[]"),finances:JSON.parse(localStorage.getItem(FIN_KEY)||"{}")};
+   const data={format:backupFormat,exportedAt:new Date().toISOString(),products:JSON.parse(localStorage.getItem(KEY)||"[]"),finances:finances};
    if(!Array.isArray(data.products)||!data.products.every(validProduct)||!validFinance(data.finances))throw Error("Los datos actuales no tienen un formato válido");
    const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
    const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="AZORES_copia_"+new Date().toISOString().slice(0,10)+".json";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
@@ -231,7 +323,7 @@ if("serviceWorker" in navigator && location.protocol.startsWith("http")) navigat
    }
    products=data.products;finances=data.finances;
    finances.opening ||= {Aurora:0,Pedro:0};finances.contributions ||= [];finances.withdrawals ||= [];finances.capitalRepayments ||= [];
-   render();alert("Copia restaurada. Comprueba Compras, Cuentas y Beneficios.");
+   render();queueCloudSave();alert("Copia restaurada. Comprueba Compras, Cuentas y Beneficios. Espera a que indique sincronizado antes de cerrar.");
   }catch(e){alert("No se ha restaurado la copia: "+e.message)}
  });
 })();
