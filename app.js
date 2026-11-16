@@ -136,7 +136,7 @@ function render(){
    const add=$("#addSale");if(add)add.onclick=()=>openSaleDialog();
  }else if(activeTab==="Envíos"){
    const sold=products.filter(p=>isSold(p)&&p.paymentStatus!=="Cobrado");
-   view.innerHTML=sold.length?`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Comprador</th><th>Transportista</th><th>Nº seguimiento</th><th>Seguimiento</th><th>Acciones</th></tr></thead><tbody>${sold.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.buyer||"—")}</td><td>${esc(p.shipping?.carrier||"—")}</td><td>${esc(p.shipping?.trackingNumber||"—")}</td><td>${safeTrackingLink(p.shipping?.trackingUrl)}</td><td><button type="button" class="edit-product" data-ship-edit="${esc(p.id)}">Editar envío</button></td></tr>`).join("")}</tbody></table></div>`:`<div class="simple-panel"><strong>No hay envíos pendientes de cobro</strong><p>Los pedidos pendientes de cobro aparecerán aquí automáticamente.</p></div>`;
+   view.innerHTML=sold.length?`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Comprador</th><th>Transportista</th><th>Seguimiento</th><th>Acciones</th></tr></thead><tbody>${sold.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.buyer||"—")}</td><td>${esc(p.shipping?.carrier||"—")}</td><td>${safeTrackingLink(p.shipping?.trackingUrl)}</td><td><button type="button" class="edit-product" data-ship-edit="${esc(p.id)}">Editar envío</button></td></tr>`).join("")}</tbody></table></div>`:`<div class="simple-panel"><strong>No hay envíos pendientes de cobro</strong><p>Los pedidos pendientes de cobro aparecerán aquí automáticamente.</p></div>`;
  }else if(activeTab==="Cuentas"){
    const f=financesSummary();
    view.innerHTML=`<div class="finance-grid">
@@ -269,7 +269,6 @@ function openShippingDialog(id){
  editingShipmentId=id;shippingForm.reset();
  $("#shippingProductName").textContent=p.name;
  shippingForm.elements.carrier.value=p.shipping?.carrier||"";
- shippingForm.elements.trackingNumber.value=p.shipping?.trackingNumber||"";
  shippingForm.elements.trackingUrl.value=p.shipping?.trackingUrl||"";
  shippingDialog.showModal();
 }
@@ -278,7 +277,7 @@ $("#cancelShippingDialog").onclick=()=>shippingDialog.close();
 shippingForm.addEventListener("submit",e=>{
  e.preventDefault();const p=products.find(x=>x.id===editingShipmentId);if(!p||!isSold(p))return;
  const f=new FormData(shippingForm);
- p.shipping={carrier:String(f.get("carrier")||"").trim(),trackingNumber:String(f.get("trackingNumber")||"").trim(),trackingUrl:String(f.get("trackingUrl")||"").trim()};
+ p.shipping={carrier:String(f.get("carrier")||"").trim(),trackingNumber:p.shipping?.trackingNumber||"",trackingUrl:String(f.get("trackingUrl")||"").trim()};
  save();shippingDialog.close();
 });
 render();
