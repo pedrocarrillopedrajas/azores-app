@@ -118,7 +118,7 @@ function stats(){
  const stock=products.filter(p=>!isSold(p)).length;
  const sold=products.filter(isSold).length;
  const profit=products.reduce((a,p)=>a+(isSold(p)?Number(p.salePrice)-Number(p.purchasePrice||0):0),0);
- $("#stock").textContent=stock;$("#sales").textContent=sold;$("#profit").textContent=money(profit);$("#cash").textContent="—";
+ $("#stock").textContent=stock;$("#sales").textContent=sold;$("#profit").textContent=money(profit);$("#cash").textContent=money(financesSummary().total);
 }
 function isSold(p){return p.salePrice!==""&&p.salePrice!=null}
 function productStatus(p){return isSold(p)?"Vendido":(p.status||"Sin vender")}
