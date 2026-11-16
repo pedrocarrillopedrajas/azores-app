@@ -1,0 +1,8 @@
+AZORES V9.7 — Beneficios y regla de caja
+
+Beneficio total: márgenes acumulados de ventas.
+Beneficio actual: máximo de cero y mínimo entre beneficio total y saldo conjunto de caja.
+Auro: 60 % del beneficio actual; Pedro: 40 %.
+Regla de retirada: mantener 400 € en caja; primero devolver capital pendiente, después considerar reparto de beneficios.
+El importe retirable es orientativo; no se realizan movimientos automáticos.
+El resto de funcionalidades permanece sin cambios.
