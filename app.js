@@ -18,6 +18,69 @@ async function cloudFetch(path,options={}){
  if(!r.ok){let detail="";try{const j=await r.json();detail=j.message||j.msg||j.error_description||j.error||""}catch(_){}throw Error(detail||"Error de conexión ("+r.status+")");}
  return r;
 }
+// V9.27: fotos privadas en Supabase Storage. Las fotos antiguas Base64 se conservan.
+const PHOTO_BUCKET="azores-fotos", PHOTO_PREFIX="storage:";
+const photoUrlCache=new Map();
+const pendingPhotoDeletions=new Set();
+function photoIsStored(value){return typeof value==="string"&&value.startsWith(PHOTO_PREFIX);}
+function photoPath(value){return value.slice(PHOTO_PREFIX.length);}
+function photoDisplay(value){return photoIsStored(value)?(photoUrlCache.get(photoPath(value))||""):value||"";}
+async function photoStorageFetch(path,options={}){
+ const request=async()=>fetch(SUPABASE_URL+path,{...options,headers:{apikey:SUPABASE_KEY,Authorization:"Bearer "+cloudSession.access_token,...(options.headers||{})}});
+ let response=await request();if(response.status===401){await refreshCloudSession();response=await request();}
+ if(!response.ok){let message="Error de Storage ("+response.status+")";try{const d=await response.json();message=d.message||d.error||message;}catch{}throw Error(message);}
+ return response;
+}
+async function uploadProductPhoto(dataUrl,productId){
+ if(!cloudSession?.user?.id)throw Error("Inicia sesión para subir la foto");
+ const raw=atob(dataUrl.split(",")[1]);const bytes=new Uint8Array(raw.length);
+ for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+ const path=cloudSession.user.id+"/"+productId+"-"+crypto.randomUUID()+".jpg";
+ await photoStorageFetch("/storage/v1/object/"+PHOTO_BUCKET+"/"+path,{method:"POST",headers:{"Content-Type":"image/jpeg","x-upsert":"false"},body:new Blob([bytes],{type:"image/jpeg"})});
+ // No descargar la URL firmada con fetch: en Safari/iOS puede fallar por CORS
+ // aunque la imagen sea accesible en un elemento <img>.
+ // La lectura autorizada se comprueba creando la URL firmada.
+ try{await resolvePhoto(PHOTO_PREFIX+path);}
+ catch(error){throw Error("Foto subida a Storage, pero no se pudo generar el acceso de lectura: "+error.message);}
+ return PHOTO_PREFIX+path;
+}
+async function resolvePhoto(value){
+ if(!photoIsStored(value))return value||"";
+ const path=photoPath(value);if(photoUrlCache.has(path))return photoUrlCache.get(path);
+ // Leer el objeto privado con la misma sesión autenticada que permite subirlo.
+ // La URL blob evita problemas de visualización de enlaces firmados en Safari iOS.
+ const response=await photoStorageFetch("/storage/v1/object/authenticated/"+PHOTO_BUCKET+"/"+path);
+ const blob=await response.blob();
+ if(!blob.size)throw Error("La fotografía descargada está vacía");
+ const url=URL.createObjectURL(blob);
+ photoUrlCache.set(path,url);
+ return url;
+}
+function hydrateStoredPhotos(root=document){
+ root.querySelectorAll("img[data-storage-photo]").forEach(async img=>{
+  const value=img.getAttribute("data-storage-photo");
+  if(!photoIsStored(value))return; // No tocar fotos antiguas Base64.
+  try{const url=await resolvePhoto(value);if(img.isConnected&&img.getAttribute("data-storage-photo")===value)img.src=url;}
+  catch(err){console.warn("AZORES: no se pudo cargar fotografía",err);}
+ });
+}
+// Solo borrar archivos propios, tras confirmar que el estado nuevo se guardó en Supabase.
+function scheduleOldPhotoCleanup(oldPhoto,newPhoto){
+ if(photoIsStored(oldPhoto)&&oldPhoto!==newPhoto)pendingPhotoDeletions.add(photoPath(oldPhoto));
+}
+async function cleanupUnusedPhotos(){
+ if(!cloudSession?.user?.id)return;
+ const inUse=new Set(products.filter(p=>photoIsStored(p.photo)).map(p=>photoPath(p.photo)));
+ for(const path of [...pendingPhotoDeletions]){
+  if(inUse.has(path)){pendingPhotoDeletions.delete(path);continue;}
+  if(!path.startsWith(cloudSession.user.id+"/")){pendingPhotoDeletions.delete(path);continue;}
+  try{
+   await photoStorageFetch("/storage/v1/object/"+PHOTO_BUCKET+"/"+path.split("/").map(encodeURIComponent).join("/"),{method:"DELETE"});
+   const url=photoUrlCache.get(path);if(url?.startsWith("blob:"))URL.revokeObjectURL(url);
+   photoUrlCache.delete(path);pendingPhotoDeletions.delete(path);
+  }catch(error){console.warn("AZORES: foto desvinculada, pero no se pudo borrar de Storage",error);}
+ }
+}
 function queueCloudSave(){
  if(!cloudReady)return;
  cloudDirty=true;setCloudStatus("Cambios pendientes de sincronizar…");
@@ -31,6 +94,8 @@ async function flushCloudSave(){
  try{
   await cloudFetch("/rest/v1/azores_state?on_conflict=user_id",{method:"POST",headers:{"Prefer":"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({user_id:cloudSession.user.id,data:snapshot,updated_at:new Date().toISOString()})});
   setCloudStatus(cloudDirty?"Cambios pendientes de sincronizar…":"✓ Sincronizado en Supabase");
+  // Eliminar únicamente tras confirmación de guardado; nunca antes.
+  if(!cloudDirty)await cleanupUnusedPhotos();
  }catch(e){cloudDirty=true;setCloudStatus("⚠ Sin sincronizar: "+e.message+". Pulsa Reintentar.");}
  finally{cloudSaving=false;if(cloudDirty&&navigator.onLine&&cloudStatus()?.textContent?.startsWith("Cambios"))setTimeout(flushCloudSave,300);}
 }
@@ -47,7 +112,7 @@ async function loadCloudState(){
   products=[];finances={opening:{Aurora:0,Pedro:0},contributions:[],withdrawals:[],capitalRepayments:[]};
  }
  finances.opening||={Aurora:0,Pedro:0};finances.contributions||=[];finances.withdrawals||=[];finances.capitalRepayments||=[];
- localStorage.setItem(KEY,JSON.stringify(products));localStorage.setItem(FIN_KEY,JSON.stringify(finances));
+ cacheLocalState();
  cloudReady=true;render();setCloudLock(false);setCloudStatus("✓ Conectado a Supabase");
 }
 async function startCloud(){
@@ -59,7 +124,7 @@ async function startCloud(){
 }
 function signOutCloud(){
  if(cloudDirty||cloudSaving){alert("Hay cambios sin sincronizar. Reintenta la sincronización antes de salir.");return;}
- cloudReady=false;cloudSession=null;localStorage.removeItem(SESSION_KEY);
+ cloudReady=false;cloudSession=null;for(const url of photoUrlCache.values())if(url.startsWith("blob:"))URL.revokeObjectURL(url);photoUrlCache.clear();localStorage.removeItem(SESSION_KEY);
  products=[];finances={opening:{Aurora:0,Pedro:0},contributions:[],withdrawals:[],capitalRepayments:[]};
  localStorage.removeItem(KEY);localStorage.removeItem(FIN_KEY);setCloudLock(true);
  document.getElementById("loginForm").reset();document.getElementById("loginError").textContent="";
@@ -85,7 +150,7 @@ let products=JSON.parse(localStorage.getItem(KEY)||"[]");
 const FIN_KEY="azores-finances-v7";
 let finances=JSON.parse(localStorage.getItem(FIN_KEY)||'{"opening":{"Aurora":0,"Pedro":0},"contributions":[],"withdrawals":[]}');
 finances.opening ||= {Aurora:0,Pedro:0};finances.contributions ||= [];finances.withdrawals ||= [];finances.capitalRepayments ||= [];
-function saveFin(){localStorage.setItem(FIN_KEY,JSON.stringify(finances));render();queueCloudSave()}
+function saveFin(){cacheLocalState();render();queueCloudSave()}
 function normalizedAccount(v){return /aurora|auro/i.test(v||"")?"Aurora":/pedro/i.test(v||"")?"Pedro":null}
 function purchaseMethod(p){return p.purchaseMethod||"Vinted"}
 function receiver(p){return normalizedAccount(p.receivingAccount||p.account)}
@@ -117,7 +182,12 @@ const trackingPreview=new Map();
 let trackingRun=0;
 const $=s=>document.querySelector(s);
 const money=n=>(Number(n)||0).toLocaleString("es-ES",{style:"currency",currency:"EUR"});
-function save(){localStorage.setItem(KEY,JSON.stringify(products));render();queueCloudSave()}
+// La nube es el origen de verdad. Una caché local llena no debe impedir guardar.
+function cacheLocalState(){
+ try{localStorage.setItem(KEY,JSON.stringify(products));localStorage.setItem(FIN_KEY,JSON.stringify(finances));}
+ catch(err){console.warn("AZORES: caché local llena; se conservará la sincronización en la nube",err);}
+}
+function save(){cacheLocalState();render();queueCloudSave()}
 function stats(){
  const f=financesSummary();
  document.getElementById("homeCash").textContent=money(f.total);
@@ -128,6 +198,7 @@ function stats(){
 function isSold(p){return p.salePrice!==""&&p.salePrice!=null}
 function productStatus(p){return isSold(p)?"Vendido":(p.status||"Sin vender")}
 function render(){
+ queueMicrotask(()=>hydrateStoredPhotos(document));
  stats();$("#sectionTitle").textContent=activeTab;
  const home=activeTab==="Inicio";
  if(home && cataLastTab!=="Inicio") {
@@ -157,13 +228,13 @@ function render(){
    const rows=products.filter(p=>activeTab==="Compras"||!isSold(p));
    rows.sort((a,b)=>String(b.purchaseDate||"").localeCompare(String(a.purchaseDate||"")) || products.indexOf(b)-products.indexOf(a));
    if(!rows.length){view.innerHTML=`<div class="empty"><div class="symbol">▧</div><h3>${activeTab==="Compras"?"Todavía no hay compras":"Tu inventario está vacío"}</h3><p>Añade el primer producto para empezar a organizar AZORES.</p><button class="primary" id="emptyAdd">＋ Añadir producto</button></div>`;$("#emptyAdd").onclick=()=>openDialog();return}
-   view.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Compra</th><th>Coste</th><th>Cuenta</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="product-cell">${p.photo?`<img class="thumb zoomable-photo" src="${p.photo}" alt="Ampliar foto de ${esc(p.name)}" tabindex="0" role="button" loading="lazy">`:`<span class="thumb">▧</span>`}<strong>${esc(p.name)}</strong></div></td><td>${p.purchaseDate||"—"}</td><td>${money(p.purchasePrice)}</td><td>${esc(p.account||"—")}</td><td><span class="pill">${esc(productStatus(p))}</span></td><td><div class="action-group"><button type="button" class="edit-product" data-edit="${esc(p.id)}">Editar</button>${!isSold(p)?`<button type="button" class="edit-product" data-sell="${esc(p.id)}">Vender</button><button type="button" class="edit-product delete-product" data-delete="${esc(p.id)}" aria-label="Eliminar compra de ${esc(p.name)}">Eliminar</button>`:""}</div></td></tr>`).join("")}</tbody></table></div>`;
+   view.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Compra</th><th>Coste</th><th>Cuenta</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="product-cell">${p.photo?`<img class="thumb zoomable-photo" src="${esc(photoDisplay(p.photo))}" data-storage-photo="${photoIsStored(p.photo)?esc(p.photo):""}" alt="Ampliar foto de ${esc(p.name)}" tabindex="0" role="button" loading="lazy">`:`<span class="thumb">▧</span>`}<strong>${esc(p.name)}</strong></div></td><td>${p.purchaseDate||"—"}</td><td>${money(p.purchasePrice)}</td><td>${esc(p.account||"—")}</td><td><span class="pill">${esc(productStatus(p))}</span></td><td><div class="action-group"><button type="button" class="edit-product" data-edit="${esc(p.id)}">Editar</button>${!isSold(p)?`<button type="button" class="edit-product" data-sell="${esc(p.id)}">Vender</button><button type="button" class="edit-product delete-product" data-delete="${esc(p.id)}" aria-label="Eliminar compra de ${esc(p.name)}">Eliminar</button>`:""}</div></td></tr>`).join("")}</tbody></table></div>`;
  }else if(activeTab==="Ventas"){
    const sold=products.filter(isSold);
    const byDate=(a,b)=>String(b.saleDate||"").localeCompare(String(a.saleDate||""));
    const pending=sold.filter(p=>p.paymentStatus!=="Cobrado").sort(byDate);
    const paid=sold.filter(p=>p.paymentStatus==="Cobrado").sort(byDate);
-   const saleRow=p=>`<tr><td class="sale-product"><div class="product-cell">${p.photo?`<img class="thumb zoomable-photo" src="${p.photo}" alt="Ampliar foto de ${esc(p.name)}" tabindex="0" role="button" loading="lazy">`:`<span class="thumb" aria-hidden="true">▧</span>`}<strong>${esc(p.name)}</strong></div></td><td>${esc(p.saleDate||"—")}</td><td>${money(p.salePrice)}</td><td>${esc(p.buyer||"—")}</td><td><span class="pill">${esc(p.paymentStatus||"—")}</span></td><td>${money(Number(p.salePrice)-Number(p.purchasePrice||0))}</td><td><div class="action-group"><button class="edit-product" data-sale-edit="${esc(p.id)}">Editar venta</button><button class="edit-product" data-sale-cancel="${esc(p.id)}">Anular venta</button></div></td></tr>`;
+   const saleRow=p=>`<tr><td class="sale-product"><div class="product-cell">${p.photo?`<img class="thumb zoomable-photo" src="${esc(photoDisplay(p.photo))}" data-storage-photo="${photoIsStored(p.photo)?esc(p.photo):""}" alt="Ampliar foto de ${esc(p.name)}" tabindex="0" role="button" loading="lazy">`:`<span class="thumb" aria-hidden="true">▧</span>`}<strong>${esc(p.name)}</strong></div></td><td>${esc(p.saleDate||"—")}</td><td>${money(p.salePrice)}</td><td>${esc(p.buyer||"—")}</td><td><span class="pill">${esc(p.paymentStatus||"—")}</span></td><td>${money(Number(p.salePrice)-Number(p.purchasePrice||0))}</td><td><div class="action-group"><button class="edit-product" data-sale-edit="${esc(p.id)}">Editar venta</button><button class="edit-product" data-sale-cancel="${esc(p.id)}">Anular venta</button></div></td></tr>`;
    const current=salesGroupOpen==="pending"?pending:salesGroupOpen==="paid"?paid:null;
    view.innerHTML=`<div class="action-group sales-toolbar"><button class="primary" id="addSale" ${products.some(p=>!isSold(p))?"":"disabled"}>＋ Registrar venta</button><button type="button" class="sales-group-toggle ${salesGroupOpen==="pending"?"selected":""}" data-sales-group="pending" aria-expanded="${salesGroupOpen==="pending"}">Pendientes (${pending.length}) <span aria-hidden="true">${salesGroupOpen==="pending"?"⌃":"⌄"}</span></button><button type="button" class="sales-group-toggle ${salesGroupOpen==="paid"?"selected":""}" data-sales-group="paid" aria-expanded="${salesGroupOpen==="paid"}">Cobradas (${paid.length}) <span aria-hidden="true">${salesGroupOpen==="paid"?"⌃":"⌄"}</span></button></div>${current?(current.length?`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Fecha</th><th>Precio venta</th><th>Comprador</th><th>Cobro</th><th>Beneficio</th><th>Acciones</th></tr></thead><tbody>${current.map(saleRow).join("")}</tbody></table></div>`:`<div class="simple-panel"><strong>No hay ventas ${salesGroupOpen==="paid"?"cobradas":"pendientes de cobro"}</strong></div>`):`<div class="simple-panel sales-empty-hint">${sold.length?"Selecciona Pendientes o Cobradas para ver las ventas.":"Aún no hay ventas. Pulsa Registrar venta para empezar."}</div>`}`;
    const add=$("#addSale");if(add)add.onclick=()=>openSaleDialog();
@@ -278,7 +349,8 @@ const dialog=$("#productDialog");
 function openDialog(id=null){
  editingId=typeof id==="string"?id:null;
  const p=products.find(item=>item.id===editingId);
- const form=$("#productForm");form.reset();
+ const form=$("#productForm");form.reset();$("#saveProductButton").disabled=false;
+ $("#productFormMessage").textContent="";
  photoData=p?.photo||"";
  form.elements.name.value=p?.name||"";
  form.elements.purchaseDate.value=p?.purchaseDate||"";
@@ -288,14 +360,54 @@ function openDialog(id=null){
  form.elements.purchaseMethod.value=p?.purchaseMethod||"Vinted";
  form.elements.status.value=p?productStatus(p):"Sin vender";
  form.elements.status.disabled=!!p&&isSold(p);
- $("#photoPreview").innerHTML=photoData?`<img src="${photoData}" alt="Vista previa">`:"";
+ updateProductPhotoPreview();
  $("#dialogTitle").textContent=p?"Editar producto":"Nuevo producto";
  $("#saveProductButton").textContent=p?"Guardar cambios":"Guardar producto";
  dialog.showModal();
 }
 $("#newProduct").onclick=()=>openDialog();$("#newProductTop").onclick=()=>openDialog();$("#closeDialog").onclick=()=>dialog.close();$("#cancelDialog").onclick=()=>dialog.close();
 document.querySelectorAll("[data-tab]").forEach(b=>b.addEventListener("click",()=>{activeTab=b.dataset.tab;if(activeTab==="Ventas")salesGroupOpen=null;render();if(activeTab==="Envíos")refreshVintedGoPreviews()}));
-$("#productForm [name=photo]").addEventListener("change",e=>{const f=e.target.files[0];if(!f)return;const reader=new FileReader();reader.onload=()=>{photoData=reader.result;$("#photoPreview").innerHTML=`<img src="${photoData}" alt="Vista previa">`};reader.readAsDataURL(f)});
+function updateProductPhotoPreview(){
+ $("#photoPreview").innerHTML=photoData?`<img src="${esc(photoDisplay(photoData))}" data-storage-photo="${photoIsStored(photoData)?esc(photoData):""}" alt="Vista previa">`:"";
+ hydrateStoredPhotos($("#photoPreview"));
+ $("#removeProductPhoto").hidden=!photoData;
+}
+$("#removeProductPhoto").addEventListener("click",()=>{
+ photoData="";
+ $("#productForm [name=photo]").value="";$("#productForm [name=photoCamera]").value="";
+ updateProductPhotoPreview();
+ $("#productFormMessage").textContent="Fotografía eliminada. Pulsa Guardar cambios para confirmar.";
+});
+async function compressProductPhoto(file){
+ const url=URL.createObjectURL(file);
+ try{
+  const img=new Image();img.src=url;
+  await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(Error("Imagen no compatible"));});
+  const max=900,scale=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
+  const canvas=document.createElement("canvas");
+  canvas.width=Math.max(1,Math.round(img.naturalWidth*scale));
+  canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
+  const ctx=canvas.getContext("2d");if(!ctx)throw Error("No se pudo procesar la imagen");
+  ctx.fillStyle="#fff";ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  return canvas.toDataURL("image/jpeg",0.68);
+ }finally{URL.revokeObjectURL(url);}
+}
+function onProductPhotoSelected(e){
+ const f=e.target.files[0];if(!f)return;
+ if(!f.type.startsWith("image/")){$("#productFormMessage").textContent="Selecciona una imagen válida.";return;}
+ // Reducir fotos de cámara antes de almacenarlas o enviarlas a Supabase.
+ $("#saveProductButton").disabled=true;
+ $("#productFormMessage").textContent="Optimizando fotografía…";
+ compressProductPhoto(f).then(data=>{
+  photoData=data;updateProductPhotoPreview();
+  $("#saveProductButton").disabled=false;
+  $("#productFormMessage").textContent="Fotografía optimizada. Pulsa Guardar cambios.";
+ }).catch(err=>{$("#saveProductButton").disabled=false;$("#productFormMessage").textContent="No se pudo preparar la fotografía: "+err.message;});
+}
+$("#chooseProductPhoto").addEventListener("click",()=>{$("#productForm [name=photo]").click();});
+$("#productForm [name=photo]").addEventListener("change",onProductPhotoSelected);
+$("#productForm [name=photoCamera]").addEventListener("change",onProductPhotoSelected);
 $("#view").addEventListener("click",e=>{const b=e.target.closest("[data-edit]");if(b)openDialog(b.dataset.edit);const sell=e.target.closest("[data-sell]");if(sell)openSaleDialog(sell.dataset.sell);const editSale=e.target.closest("[data-sale-edit]");if(editSale)openSaleDialog(editSale.dataset.saleEdit,true);const cancel=e.target.closest("[data-sale-cancel]");if(cancel)cancelSale(cancel.dataset.saleCancel);const ship=e.target.closest("[data-ship-edit]");if(ship)openShippingDialog(ship.dataset.shipEdit);const del=e.target.closest("[data-delete]");if(del)deletePurchase(del.dataset.delete)});
 function deletePurchase(id){
  if(!cloudReady){alert("Espera a que se conecte Supabase antes de eliminar una compra.");return;}
@@ -305,14 +417,34 @@ function deletePurchase(id){
  if(isSold(p)){alert("Esta compra tiene una venta registrada. Primero anula la venta si realmente quieres eliminar la compra.");return;}
  if(!confirm(`¿Eliminar definitivamente la compra de "${p.name}"?\n\nSe quitará también del inventario y se recalcularán las cuentas. Esta acción no se puede deshacer desde la aplicación.\n\n¿Quieres continuar?`))return;
  products=products.filter(x=>x.id!==id);
+ scheduleOldPhotoCleanup(p.photo,"");
  save();
 }
-$("#productForm").addEventListener("submit",e=>{
- e.preventDefault();const f=new FormData(e.currentTarget);
- const fields={name:f.get("name"),purchaseDate:f.get("purchaseDate"),purchasePrice:f.get("purchasePrice"),origin:f.get("origin"),account:f.get("account"),purchaseMethod:f.get("purchaseMethod"),status:editingId&&products.find(x=>x.id===editingId)&&isSold(products.find(x=>x.id===editingId))?"Vendido":f.get("status"),photo:photoData};
- if(editingId){const p=products.find(item=>item.id===editingId);if(!p)return;Object.assign(p,fields)}
- else products.push({id:crypto.randomUUID(),...fields,salePrice:""});
- save();dialog.close();activeTab="Inventario";render();
+$("#productForm").addEventListener("submit",async e=>{
+ e.preventDefault();
+ const form=e.currentTarget;
+ if(!form.checkValidity()){
+  const invalid=form.querySelector(":invalid");
+  $("#productFormMessage").textContent="Revisa este campo antes de guardar: "+(invalid?.closest("label")?.textContent?.trim()||"campo obligatorio");
+  invalid?.focus();form.reportValidity();return;
+ }
+ if(!cloudReady){$("#productFormMessage").textContent="Espera a que AZORES conecte con la nube.";return;}
+ const button=$("#saveProductButton");button.disabled=true;
+ const productId=editingId||crypto.randomUUID();
+ let finalPhoto=photoData;
+ try{
+  if(typeof photoData==="string"&&photoData.startsWith("data:image/")){
+   $("#productFormMessage").textContent="Subiendo fotografía a Supabase…";
+   finalPhoto=await uploadProductPhoto(photoData,productId);
+  }
+ }catch(error){$("#productFormMessage").textContent="No se ha guardado: "+error.message;button.disabled=false;return;}
+ const f=new FormData(form);
+ const fields={name:f.get("name"),purchaseDate:f.get("purchaseDate"),purchasePrice:f.get("purchasePrice"),origin:f.get("origin"),account:f.get("account"),purchaseMethod:f.get("purchaseMethod"),status:editingId&&products.find(x=>x.id===editingId)&&isSold(products.find(x=>x.id===editingId))?"Vendido":f.get("status"),photo:finalPhoto};
+ if(editingId){const p=products.find(item=>item.id===editingId);if(!p)return;const previousPhoto=p.photo;Object.assign(p,fields);scheduleOldPhotoCleanup(previousPhoto,finalPhoto)}
+ else products.push({id:productId,...fields,salePrice:""});
+ try{save();dialog.close();activeTab="Inventario";render();}
+ catch(error){$("#productFormMessage").textContent="No se pudieron guardar los cambios: "+error.message;}
+ finally{button.disabled=false;}
 });
 const saleDialog=$("#saleDialog"),saleForm=$("#saleForm");
 function openSaleDialog(id=null,edit=false){
@@ -410,6 +542,47 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
 }
 
 
+// Limpieza voluntaria de todas las fotografías, nunca automática al instalar.
+let azoresBackupDownloadedThisSession=false;
+document.getElementById("clearAllPhotos").addEventListener("click",async()=>{
+ if(!cloudReady||!cloudSession?.user?.id||cloudDirty||cloudSaving){
+  alert("Espera a que aparezca «Sincronizado en Supabase» antes de limpiar las fotos.");return;
+ }
+ if(!azoresBackupDownloadedThisSession){
+  alert("Primero descarga una copia de seguridad desde «▣ Copias» en esta sesión.");return;
+ }
+ const withPhoto=products.filter(p=>p.photo);
+ if(!withPhoto.length){alert("Los productos ya están sin fotografías.");return;}
+ if(!confirm("Se quitarán TODAS las fotografías de "+withPhoto.length+" productos, antiguas y nuevas. NO se eliminarán los productos, compras, ventas, cuentas ni beneficios. ¿Continuar?"))return;
+ if(prompt("Para confirmar la limpieza escribe BORRAR FOTOS:")!=="BORRAR FOTOS")return;
+ const btn=document.getElementById("clearAllPhotos");btn.disabled=true;
+ const original=products;
+ const cleared=products.map(p=>({...p,photo:""}));
+ const storedPaths=[...new Set(original.map(p=>p.photo).filter(photoIsStored).map(photoPath))];
+ try{
+  // Persistir primero los datos sin fotos. Si falla, no cambiar estado local ni borrar archivos.
+  const snapshot={products:cleared,finances:JSON.parse(JSON.stringify(finances))};
+  await cloudFetch("/rest/v1/azores_state?on_conflict=user_id",{
+   method:"POST",headers:{"Prefer":"resolution=merge-duplicates,return=minimal"},
+   body:JSON.stringify({user_id:cloudSession.user.id,data:snapshot,updated_at:new Date().toISOString()})
+  });
+  products=cleared;cacheLocalState();render();setCloudStatus("✓ Sincronizado en Supabase");
+  // Solo archivos de la cuenta que estaban referenciados por los productos.
+  let failures=0;
+  for(const path of storedPaths){
+   if(!path.startsWith(cloudSession.user.id+"/"))continue;
+   try{
+    await photoStorageFetch("/storage/v1/object/"+PHOTO_BUCKET+"/"+path.split("/").map(encodeURIComponent).join("/"),{method:"DELETE"});
+    const url=photoUrlCache.get(path);if(url?.startsWith("blob:"))URL.revokeObjectURL(url);
+    photoUrlCache.delete(path);
+   }catch(e){failures++;console.warn("No se pudo borrar el archivo",path,e);}
+  }
+  alert("Limpieza terminada: "+withPhoto.length+" productos sin fotografía. Los demás datos siguen intactos."+
+   (failures?" Atención: "+failures+" archivos no pudieron borrarse de Storage.":"")+
+   " Los archivos huérfanos antiguos de Storage que no estaban asociados a productos no se han tocado.");
+ }catch(e){alert("No se ha realizado la limpieza: "+e.message);}
+ finally{btn.disabled=false;}
+});
 // Copias completas de AZORES (datos del navegador, no sincronización)
 (function(){
  const exportButton=document.getElementById("exportBackup"), importButton=document.getElementById("importBackup"), fileInput=document.getElementById("backupFile");
@@ -422,9 +595,10 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
  function validProduct(p){return p&&typeof p==="object"&&!Array.isArray(p)&&typeof p.id==="string"&&p.id.length>0&&typeof p.name==="string"&&Number.isFinite(Number(p.purchasePrice??0));}
  exportButton.addEventListener("click",()=>{
   try{
-   const data={format:backupFormat,exportedAt:new Date().toISOString(),products:JSON.parse(localStorage.getItem(KEY)||"[]"),finances:finances};
+   const data={format:backupFormat,exportedAt:new Date().toISOString(),products:JSON.parse(JSON.stringify(products)),finances:finances};
    if(!Array.isArray(data.products)||!data.products.every(validProduct)||!validFinance(data.finances))throw Error("Los datos actuales no tienen un formato válido");
    const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+   azoresBackupDownloadedThisSession=true;
    const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="AZORES_copia_"+new Date().toISOString().slice(0,10)+".json";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
   }catch(e){alert("No se ha podido generar la copia: "+e.message)}
  });
