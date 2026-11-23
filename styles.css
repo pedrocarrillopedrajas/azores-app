@@ -68,7 +68,7 @@ dialog::backdrop{background:#102B2477}
 /* V9.17: protección de datos compacta; no afecta a Supabase ni a copias */
 .welcome-actions{display:flex;align-items:flex-start;justify-content:flex-end;gap:10px;flex-wrap:wrap}
 .backup-dropdown{position:relative;z-index:5}
-.backup-dropdown>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:10px 14px;background:#fff;border:1px solid #cbdad7;border-radius:10px;color:#163f36;font-size:13px;font-weight:700;white-space:nowrap}
+.backup-dropdown>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:10px 14px;background:#fff;border:1px solid #cbdad7;border-radius:10px;color:var(--navy);font-size:13px;font-weight:700;white-space:nowrap}
 .backup-dropdown>summary::-webkit-details-marker{display:none}
 .backup-dropdown>summary:focus-visible{outline:3px solid #6aab9d;outline-offset:2px}
 .backup-dropdown[open]>summary{background:#f1f7f5}
@@ -91,7 +91,7 @@ dialog::backdrop{background:#102B2477}
 .header-actions .backup-dropdown{z-index:40}
 .header-actions .backup-dropdown>summary{min-height:30px;padding:5px 10px;background:transparent;color:#E2D4AD;border:1px solid #9D8759;border-radius:30px;font-size:10px;letter-spacing:1px}
 .header-actions .backup-dropdown[open]>summary{background:#23564b}
-.header-actions .backup-dropdown .backup-panel{color:#163f36;letter-spacing:normal;z-index:50}
+.header-actions .backup-dropdown .backup-panel{color:var(--navy);letter-spacing:normal;z-index:50}
 body:has(#appShell[hidden]) .header-actions .backup-dropdown{display:none}
 @media(max-width:650px){.header-actions{gap:6px}.header-actions .backup-dropdown>summary{font-size:9px;padding:5px 8px}.header-actions .backup-dropdown .backup-panel{right:0}}
 
@@ -113,3 +113,34 @@ body:has(#appShell[hidden]) .header-actions .backup-dropdown{display:none}
 .azores-photo-viewer::backdrop{background:rgba(8,18,23,.9)}
 .azores-photo-viewer img{display:block;margin:auto;max-width:100%;max-height:calc(94vh - 55px);width:auto;height:auto;object-fit:contain;border-radius:10px}
 .azores-photo-close{position:absolute;right:8px;top:0;border:0;border-radius:50%;background:#fff;color:#17242c;width:36px;height:36px;font-size:27px;line-height:30px;cursor:pointer}
+
+/* AZORES V9.39: identidad verde original + calendario lateral plegable */
+body{background:var(--bg);color:var(--ink)}
+.shell{max-width:1440px}
+.az-dashboard-layout{display:grid;grid-template-columns:264px minmax(0,1fr);gap:20px;align-items:start}
+.az-dashboard-main{min-width:0}
+.az-dashboard-main .home-summary,.az-dashboard-main .content-card{max-width:none}
+.az-calendar{position:sticky;top:16px;background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 8px 28px #244b3510;min-width:0}
+.az-calendar-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--navy)}
+.az-calendar-toggle,.az-month-nav button{border:1px solid var(--line);background:#F0F2EC;color:var(--navy);border-radius:9px;cursor:pointer;min-width:30px;height:30px;font:inherit;font-weight:700}
+.az-month-nav{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:18px 0 12px}
+.az-month-nav strong{text-align:center;text-transform:capitalize;font-size:13px}
+.az-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
+.az-weekday{text-align:center;color:#718477;font-size:11px;font-weight:700;padding:7px 0}
+.az-day{border:1px solid transparent;border-radius:9px;background:transparent;min-height:38px;padding:4px 1px;display:flex;flex-direction:column;align-items:center;justify-content:space-between;cursor:pointer;color:#234337;font-size:12px}
+.az-day:hover{background:#edf5ee}.az-day.selected{background:#d9e9dc;border-color:#8eb79b;font-weight:700}
+.az-day-dots{display:flex;justify-content:center;gap:2px;min-height:5px}
+.az-dot{display:inline-block;width:6px;height:6px;border-radius:50%;flex-shrink:0;background:#8c9a90}
+.az-buy{background:#d79a38}.az-sale{background:#2e9b6b}.az-ship{background:#4a89c9}.az-paid{background:#9973c7}
+.az-calendar-legend{display:flex;flex-wrap:wrap;gap:8px 10px;margin:15px 0;padding-bottom:12px;border-bottom:1px solid #e2eae2}
+.az-calendar-legend span{font-size:10px;color:#65776c;display:flex;align-items:center;gap:4px}
+.az-day-activity>strong{display:block;font-size:13px;color:#1e4634;text-transform:capitalize}
+.az-day-activity>p{font-size:12px;color:#748478}
+.az-activity-row{display:flex;gap:8px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #edf1ec}
+.az-activity-row .az-dot{margin-top:5px;width:8px;height:8px}
+.az-activity-row div{min-width:0;display:flex;flex-direction:column;gap:2px;font-size:12px;overflow-wrap:anywhere}
+.az-activity-row b{color:#204d38}.az-activity-row span{color:#52675a}.az-activity-row small{color:#667b6c}
+.az-calendar-note{display:block;color:#7b8d7f;font-size:10px;margin-top:12px}
+.az-calendar.is-collapsed{padding:12px}.az-calendar.is-collapsed .az-calendar-head strong{font-size:12px}
+.az-dashboard-layout:has(.az-calendar.is-collapsed){grid-template-columns:120px minmax(0,1fr)}
+@media(max-width:760px){.az-dashboard-layout,.az-dashboard-layout:has(.az-calendar.is-collapsed){display:block}.az-calendar{position:static;margin-bottom:14px}.az-calendar.is-collapsed{padding:12px 16px}.az-calendar.is-collapsed .az-calendar-head strong{font-size:14px}.az-calendar-grid{max-width:400px}.az-day{min-height:43px}}
