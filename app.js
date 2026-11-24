@@ -746,7 +746,7 @@ document.getElementById("registerPushButton")?.addEventListener("click", async (
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) subscription = await registration.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:azoresBase64UrlToBytes(config.publicKey)});
     await cloudFetch("/functions/v1/azores-push", {method:"POST", body:JSON.stringify({subscription:subscription.toJSON(), dispositivo: /iPad/i.test(navigator.userAgent) ? "iPad" : /iPhone/i.test(navigator.userAgent) ? "iPhone" : "Navegador"})});
-    say("✓ Dispositivo registrado para notificaciones push. Aún falta activar el envío automático desde el servidor.");
+    say("Este dispositivo se ha registrado para recibir avisos automáticos.");
   } catch(error) { say("No se pudo activar: " + (error?.message || String(error))); }
   finally { button.disabled = false; }
 });
