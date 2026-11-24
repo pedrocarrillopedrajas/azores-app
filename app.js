@@ -264,8 +264,8 @@ function azInventoryToolbar(rows){return `<div class="az-inventory-toolbar"><str
 $("#view").addEventListener("click",e=>{const b=e.target.closest("[data-inventory-mode]");if(b){azInventoryMode=b.dataset.inventoryMode;render();}});
 function render(){
  queueMicrotask(()=>hydrateStoredPhotos(document));
- stats();azRenderCalendar();$("#sectionTitle").textContent=activeTab;
- const home=activeTab==="Inicio";azRenderRecent(home);
+ stats();azRenderGoals();azRenderCalendar();$("#sectionTitle").textContent=activeTab;
+ const home=activeTab==="Inicio";azRenderRecent(home);$("#azGoals").hidden=!home;
  if(home && cataLastTab!=="Inicio") {
    const cata=document.getElementById("cataCelebration");
    if(cata){
@@ -286,7 +286,7 @@ function render(){
  document.querySelector(".content-card").classList.toggle("home-navigation",home);
  document.querySelector(".section-heading").hidden=home;
  document.querySelector(".welcome").hidden=home;
- document.querySelectorAll("[data-tab]").forEach(b=>b.classList.toggle("active",b.dataset.tab===activeTab));
+ document.querySelectorAll("[data-tab]").forEach(b=>{const on=b.dataset.tab===activeTab;b.classList.toggle("active",on);if(on)b.setAttribute("aria-current","page");else b.removeAttribute("aria-current");});
  const view=$("#view");
  if(home){view.innerHTML="";return;}
  if(activeTab==="Compras"||activeTab==="Inventario"){
@@ -449,7 +449,7 @@ function openDialog(id=null){
  dialog.showModal();
 }
 $("#newProduct").onclick=()=>openDialog();$("#newProductTop").onclick=()=>openDialog();$("#closeDialog").onclick=()=>dialog.close();$("#cancelDialog").onclick=()=>dialog.close();
-document.querySelectorAll("[data-tab]").forEach(b=>b.addEventListener("click",()=>{activeTab=b.dataset.tab;if(activeTab==="Ventas")salesGroupOpen=null;render();if(activeTab==="Envíos")refreshVintedGoPreviews()}));
+document.querySelectorAll("[data-tab]").forEach(b=>b.addEventListener("click",()=>{activeTab=b.dataset.tab;azCloseMore();if(activeTab==="Ventas")salesGroupOpen=null;render();if(activeTab==="Envíos")refreshVintedGoPreviews()}));
 function updateProductPhotoPreview(){
  $("#photoPreview").innerHTML=photoData?`<img src="${esc(photoDisplay(photoData))}" data-storage-photo="${photoIsStored(photoData)?esc(photoData):""}" alt="Vista previa">`:"";
  hydrateStoredPhotos($("#photoPreview"));
@@ -797,3 +797,12 @@ document.getElementById("registerPushButton")?.addEventListener("click", async (
 
 // V9.45: preferencia visual local, independiente de los datos.
 (()=>{const root=document.documentElement,button=document.getElementById('azThemeToggle');if(!button)return;function apply(dark){root.dataset.theme=dark?'dark':'light';button.textContent=dark?'☀':'☾';button.setAttribute('aria-pressed',String(dark));button.setAttribute('aria-label',dark?'Activar modo claro':'Activar modo oscuro');button.title=button.getAttribute('aria-label');}apply(root.dataset.theme==='dark');button.addEventListener('click',()=>{const dark=root.dataset.theme!=='dark';apply(dark);try{localStorage.setItem('azores-theme',dark?'dark':'light')}catch(e){}});})();
+
+// V9.46: presentación exclusivamente; usa el resumen contable existente.
+function azRenderGoals(){
+ const f=financesSummary();
+ function bar(label,value,target,detail){const pct=target>0?Math.max(0,Math.min(100,value/target*100)):0;return `<div class="az-goal"><div class="az-goal-line"><strong>${label}</strong><span>${money(value)} / ${money(target)}</span></div><progress max="100" value="${pct}" aria-label="${label}"></progress><small>${detail}</small></div>`;}
+ document.getElementById('azGoals').innerHTML='<h2>Objetivos económicos</h2>'+bar('Liquidez',f.total,500,f.total>=500?'Objetivo alcanzado · Reserva mínima: 400 €':`Faltan ${money(500-f.total)} · Reserva mínima: 400 €`)+['Aurora','Pedro'].map(w=>bar('Capital · '+w,f.repaid[w],f.capital[w],f.capital[w]>0?`Pendiente: ${money(f.capitalPending[w])}`:'Sin capital aportado')).join('');
+}
+function azCloseMore(){document.getElementById('azMoreMenu').hidden=true;document.getElementById('azMoreToggle').setAttribute('aria-expanded','false');}
+(()=>{const layout=document.getElementById('azDashboardLayout'),toggle=document.getElementById('azMenuToggle');let collapsed=false;try{collapsed=localStorage.getItem('azores-menu-collapsed')==='1'}catch(e){}function apply(){layout.classList.toggle('az-menu-collapsed',collapsed);toggle.setAttribute('aria-expanded',String(!collapsed));toggle.setAttribute('aria-label',collapsed?'Ampliar menú':'Plegar menú');}apply();toggle.addEventListener('click',()=>{collapsed=!collapsed;apply();try{localStorage.setItem('azores-menu-collapsed',collapsed?'1':'0')}catch(e){}});const more=document.getElementById('azMoreToggle'),panel=document.getElementById('azMoreMenu');more.addEventListener('click',()=>{panel.hidden=!panel.hidden;more.setAttribute('aria-expanded',String(!panel.hidden));});document.addEventListener('click',e=>{if(!panel.hidden&&!panel.contains(e.target)&&!more.contains(e.target))azCloseMore();});document.addEventListener('keydown',e=>{if(e.key==='Escape')azCloseMore();});})();
