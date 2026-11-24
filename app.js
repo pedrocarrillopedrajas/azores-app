@@ -207,6 +207,7 @@ function azCalendarDate(value){
  const d=new Date(s);if(!Number.isFinite(d.getTime()))return null;
  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
+function azToday(){return azCalendarDate(new Date());}
 function azCalendarEvents(){
  const events=[];
  const add=(date,type,title,amount)=>{const day=azCalendarDate(date);if(day)events.push({day,type,title,amount});};
@@ -215,17 +216,16 @@ function azCalendarEvents(){
   add(p.purchaseDate,'buy',name,p.purchasePrice);
   if(isSold(p))add(p.saleDate,'sale',name,p.salePrice);
   const shipping=p.shipping||{};
-  // La última actualización del transportista es un movimiento de seguimiento, no la fecha de envío.
-  const tracking=trackingPreview.get(p.id);
-  const eventDate=tracking?.lastUpdated||shipping.lastUpdated;
-  if(shipping.carrier&&eventDate)add(eventDate,'ship',name+' · '+String(shipping.status||'Seguimiento'),null);
-  if(Array.isArray(shipping.events))shipping.events.forEach(e=>{
-   if(e&&typeof e==='object')add(e.date||e.timestamp||e.at,'ship',name+' · '+String(e.status||e.description||'Movimiento'),null);
-  });
-  // No atribuir una fecha al cobro si el registro no la contiene.
-  if(p.paymentStatus==='Cobrado')add(p.paidAt||p.paymentDate||p.collectedAt,'paid',name,p.salePrice);
+  if(isSold(p))add(shipping.sentAt||shipping.shippedAt||shipping.shippingDate,'ship',name,null);
+  if(isSold(p)&&p.paymentStatus==='Cobrado')add(p.paidAt||p.paymentDate||p.collectedAt,'paid',name,p.salePrice);
  });
  return events;
+}
+function azRenderRecent(home){
+ const el=document.getElementById('azRecent');if(!el)return;el.hidden=!home;if(!home)return;
+ const labels={buy:'Compra',sale:'Venta',ship:'Envío',paid:'Cobro'},icons={buy:'↓',sale:'↑',ship:'→',paid:'€'};
+ const events=azCalendarEvents().filter(e=>e.day<=azToday()).sort((a,b)=>b.day.localeCompare(a.day)).slice(0,6);
+ el.innerHTML=`<header><h2>Actividad reciente</h2><small>Últimos movimientos registrados</small></header>${events.length?events.map(e=>`<div class="az-recent-row"><span class="az-recent-icon az-${e.type}" aria-hidden="true">${icons[e.type]}</span><div class="az-recent-detail"><strong>${labels[e.type]} · ${esc(e.title)}</strong><small>${esc(new Date(e.day+'T12:00:00').toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'}))}</small></div>${e.amount!==null&&e.amount!==undefined&&e.amount!==''?`<strong class="az-recent-amount">${money(e.amount)}</strong>`:''}</div>`).join(''):'<p>Sin movimientos registrados.</p>'}<small class="az-recent-note">Solo operaciones con fecha registrada.</small>`;
 }
 function azRenderCalendar(){
  const grid=document.getElementById('azCalendarGrid');if(!grid)return;
@@ -259,10 +259,13 @@ document.getElementById('azCalendarToggle').addEventListener('click',()=>azSetCa
 document.getElementById('azPrevMonth').addEventListener('click',()=>azCalendarShift(-1));
 document.getElementById('azNextMonth').addEventListener('click',()=>azCalendarShift(1));
 azSetCalendarCollapsed(azCalendarState.collapsed);
+let azInventoryMode="cards";
+function azInventoryToolbar(rows){return `<div class="az-inventory-toolbar"><strong>${rows.length} productos · ${money(rows.reduce((n,p)=>n+(Number(p.purchasePrice)||0),0))} a coste</strong><div class="action-group"><button class="edit-product" data-inventory-mode="cards" aria-pressed="${azInventoryMode==="cards"}">▦ Tarjetas</button><button class="edit-product" data-inventory-mode="table" aria-pressed="${azInventoryMode==="table"}">☰ Tabla</button></div></div>`;}
+$("#view").addEventListener("click",e=>{const b=e.target.closest("[data-inventory-mode]");if(b){azInventoryMode=b.dataset.inventoryMode;render();}});
 function render(){
  queueMicrotask(()=>hydrateStoredPhotos(document));
  stats();azRenderCalendar();$("#sectionTitle").textContent=activeTab;
- const home=activeTab==="Inicio";
+ const home=activeTab==="Inicio";azRenderRecent(home);
  if(home && cataLastTab!=="Inicio") {
    const cata=document.getElementById("cataCelebration");
    if(cata){
@@ -290,7 +293,11 @@ function render(){
    const rows=products.filter(p=>activeTab==="Compras"||!isSold(p));
    rows.sort((a,b)=>String(b.purchaseDate||"").localeCompare(String(a.purchaseDate||"")) || products.indexOf(b)-products.indexOf(a));
    if(!rows.length){view.innerHTML=`<div class="empty"><div class="symbol">▧</div><h3>${activeTab==="Compras"?"Todavía no hay compras":"Tu inventario está vacío"}</h3><p>Añade el primer producto para empezar a organizar AZORES.</p><button class="primary" id="emptyAdd">＋ Añadir producto</button></div>`;$("#emptyAdd").onclick=()=>openDialog();return}
-   view.innerHTML=`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Compra</th><th>Coste</th><th>Cuenta</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="product-cell">${p.photo?`<img class="thumb zoomable-photo" src="${esc(photoDisplay(p.photo))}" data-storage-photo="${photoIsStored(p.photo)?esc(p.photo):""}" alt="Ampliar foto de ${esc(p.name)}" tabindex="0" role="button" loading="lazy">`:`<span class="thumb">▧</span>`}<strong>${esc(p.name)}</strong></div></td><td>${p.purchaseDate||"—"}</td><td>${money(p.purchasePrice)}</td><td>${esc(p.account||"—")}</td><td><span class="pill">${esc(productStatus(p))}</span></td><td><div class="action-group"><button type="button" class="edit-product" data-edit="${esc(p.id)}">Editar</button>${!isSold(p)?`<button type="button" class="edit-product" data-sell="${esc(p.id)}">Vender</button><button type="button" class="edit-product delete-product" data-delete="${esc(p.id)}" aria-label="Eliminar compra de ${esc(p.name)}">Eliminar</button>`:""}</div></td></tr>`).join("")}</tbody></table></div>`;
+   if(activeTab==="Inventario" && azInventoryMode==="cards"){
+     view.innerHTML=`${azInventoryToolbar(rows)}<div class="az-inventory-grid">${rows.map(p=>`<article class="az-inventory-card"><div class="az-inventory-photo">${p.photo?`<img class="zoomable-photo" src="${esc(photoDisplay(p.photo))}" data-storage-photo="${photoIsStored(p.photo)?esc(p.photo):""}" alt="Ampliar foto de ${esc(p.name)}" tabindex="0" role="button" loading="lazy">`:`<span aria-hidden="true">▧</span>`}<span class="az-inventory-status ${productStatus(p)==="Por recibir"?"waiting":productStatus(p)==="Por subir"?"upload":"ready"}">${esc(productStatus(p))}</span></div><div class="az-inventory-body"><h3>${esc(p.name)}</h3><small>Compra: ${esc(p.purchaseDate||"—")} · ${esc(p.account||"—")}</small><div class="az-inventory-cost"><small>Coste</small><strong>${money(p.purchasePrice)}</strong></div><div class="action-group"><button class="edit-product" data-edit="${esc(p.id)}">Editar</button><button class="primary" data-sell="${esc(p.id)}">Vender</button><button class="edit-product delete-product" data-delete="${esc(p.id)}">Eliminar</button></div></div></article>`).join("")}</div>`;
+     return;
+   }
+   view.innerHTML=`${activeTab==="Inventario"?azInventoryToolbar(rows):""}<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Compra</th><th>Coste</th><th>Cuenta</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="product-cell">${p.photo?`<img class="thumb zoomable-photo" src="${esc(photoDisplay(p.photo))}" data-storage-photo="${photoIsStored(p.photo)?esc(p.photo):""}" alt="Ampliar foto de ${esc(p.name)}" tabindex="0" role="button" loading="lazy">`:`<span class="thumb">▧</span>`}<strong>${esc(p.name)}</strong></div></td><td>${p.purchaseDate||"—"}</td><td>${money(p.purchasePrice)}</td><td>${esc(p.account||"—")}</td><td><span class="pill">${esc(productStatus(p))}</span></td><td><div class="action-group"><button type="button" class="edit-product" data-edit="${esc(p.id)}">Editar</button>${!isSold(p)?`<button type="button" class="edit-product" data-sell="${esc(p.id)}">Vender</button><button type="button" class="edit-product delete-product" data-delete="${esc(p.id)}" aria-label="Eliminar compra de ${esc(p.name)}">Eliminar</button>`:""}</div></td></tr>`).join("")}</tbody></table></div>`;
  }else if(activeTab==="Ventas"){
    const sold=products.filter(isSold);
    const byDate=(a,b)=>String(b.saleDate||"").localeCompare(String(a.saleDate||""));
@@ -303,7 +310,7 @@ function render(){
    view.querySelectorAll("[data-sales-group]").forEach(btn=>btn.onclick=()=>{salesGroupOpen=salesGroupOpen===btn.dataset.salesGroup?null:btn.dataset.salesGroup;render()});
  }else if(activeTab==="Envíos"){
    const sold=products.filter(p=>isSold(p)&&p.paymentStatus!=="Cobrado");
-   view.innerHTML=`<span id="testVintedGoResult" role="status" hidden></span>`+(sold.length?`<div class="table-wrap"><table><thead><tr><th>Producto</th><th>Comprador</th><th>Transportista</th><th>Seguimiento</th><th>Estado del paquete</th><th>Última actualización</th><th>Acciones</th></tr></thead><tbody>${sold.map(p=>{const sh=p.shipping||{};const preview=trackingPreview.get(p.id);const effective=preview||sh;const updated=effective.lastUpdated?new Date(effective.lastUpdated).toLocaleString("es-ES",{dateStyle:"short",timeStyle:"short"}):"Pendiente de consulta automática";return `<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.buyer||"—")}</td><td>${esc(sh.carrier||"—")}</td><td>${safeTrackingLink(sh.trackingUrl)}</td><td><span class="pill">${esc(effective.status||"Pendiente de seguimiento")}</span></td><td>${esc(updated)}</td><td><button type="button" class="edit-product" data-ship-edit="${esc(p.id)}">Editar envío</button></td></tr>`}).join("")}</tbody></table></div><p class="muted">El estado del paquete es independiente del cobro. Los envíos permanecen aquí hasta que marques la venta como «Cobrado».</p>`:`<div class="simple-panel"><strong>No hay envíos pendientes de cobro</strong><p>Los pedidos pendientes de cobro aparecerán aquí automáticamente.</p></div>`);
+   view.innerHTML=`<span id="testVintedGoResult" role="status" hidden></span>`+(sold.length?`<div class="az-ship-grid">${sold.map(azShipCard).join("")}</div><p class="muted">Los envíos permanecen aquí hasta que la venta esté cobrada.</p>`:`<div class="simple-panel"><strong>No hay envíos pendientes de cobro</strong></div>`);
    const testButton=document.getElementById("testVintedGo");if(testButton)testButton.onclick=refreshVintedGoPreviews;
  }else if(activeTab==="Cuentas"){
    const f=financesSummary();
@@ -331,6 +338,20 @@ function render(){
  }
 }
 
+function azShipStage(status,sent){
+ const t=String(status||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
+ if(/^(entregado|paquete entregado|entregado al destinatario|paquete entregado al destinatario|recogido por (el )?destinatario)$/.test(t))return 3;
+ if(/disponible para (la )?recogida|listo para recoger|listo para (la )?recogida|esperando a ser recogido|a la espera de recogida por el destinatario/.test(t))return 2;
+ if(/de camino|en camino|en transito|clasific|admitido|paquete dejado|en transporte/.test(t)||sent)return 1;
+ if(/pendiente de envio|envio creado/.test(t))return 0;
+ return -1;
+}
+function azShipCard(p){
+ const sh=p.shipping||{}, e=trackingPreview.get(p.id)||sh, status=e.status||"Pendiente de seguimiento", stage=azShipStage(status,sh.sentAt);
+ const date=v=>v&&Number.isFinite(Date.parse(v))?new Date(v).toLocaleString("es-ES",{dateStyle:"short",timeStyle:"short"}):"";
+ const events=Array.isArray(e.events)?[...e.events].sort((a,b)=>(Date.parse(b.fecha||b.date||b.datetime)||0)-(Date.parse(a.fecha||a.date||a.datetime)||0)):[];
+ return `<article class="az-ship-card"><header><div><small>${esc(sh.carrier||"Transportista sin indicar")}</small><h3>${esc(p.name)}</h3><small>${esc(p.buyer||"Comprador sin indicar")}</small></div><span class="pill">${esc(status)}</span></header><div class="az-ship-progress" aria-label="Fase orientativa del envío">${["Preparación","En camino","Recogida","Entregado"].map((label,i)=>`<div class="${stage>=i?"done":""}"><span>${stage>i?"✓":i+1}</span><small>${label}</small></div>`).join("")}</div><div class="az-ship-history"><strong>Movimientos disponibles</strong>${events.length?events.map(x=>`<div class="az-ship-event">${esc(x.estado||x.mensaje||x.message||x.status||x.description||"Descripción no disponible")}<small>${esc(date(x.fecha||x.date||x.datetime))}</small></div>`).join(""):`<div class="az-ship-event">${esc(status)}<small>${esc(date(e.lastUpdated)||"Sin fecha de actualización")}</small></div>`}${sh.sentAt?`<div class="az-ship-event">Fecha de envío <small>${esc(sh.sentAt)}</small></div>`:""}</div><footer>${safeTrackingLink(sh.trackingUrl)}<button class="edit-product" data-ship-edit="${esc(p.id)}">Editar envío</button></footer></article>`;
+}
 function vintedGoNumber(p){
  if(!isSold(p)||p.paymentStatus==="Cobrado"||!/vinted\s*go/i.test(p.shipping?.carrier||""))return null;
  try{
@@ -370,7 +391,7 @@ async function refreshVintedGoPreviews(){
   if(entry&&Number.isFinite(entry.checkedAt)&&now-entry.checkedAt>=0&&now-entry.checkedAt<TRACKING_INTERVAL_MS&&typeof entry.status==="string"&&Number.isFinite(Date.parse(entry.lastUpdated))){
    const previous=trackingPreview.get(p.id);
    if(!previous||previous.status!==entry.status||previous.lastUpdated!==entry.lastUpdated){
-    trackingPreview.set(p.id,{status:entry.status,lastUpdated:entry.lastUpdated});changed++;
+    trackingPreview.set(p.id,{status:entry.status,lastUpdated:entry.lastUpdated,events:entry.events||[]});changed++;
    }
    cached++;
   }else pending.push({p,number,key});
@@ -383,9 +404,9 @@ async function refreshVintedGoPreviews(){
    const response=await cloudFetch("/functions/v1/azores-prueba-vintedgo?seguimiento="+encodeURIComponent(number),{method:"POST",body:"{}"});
    const result=await response.json();
    if(result.resultado!=="Seguimiento leído"||typeof result.estadoPaquete!=="string"||!Number.isFinite(Date.parse(result.ultimaActualizacion)))throw Error("Respuesta de seguimiento no válida");
-   const next={status:result.estadoPaquete,lastUpdated:result.ultimaActualizacion};
+   const next={status:result.estadoPaquete,lastUpdated:result.ultimaActualizacion,events:Array.isArray(result.movimientos)?result.movimientos:[]};
    const previous=trackingPreview.get(p.id);
-   if(!previous||previous.status!==next.status||previous.lastUpdated!==next.lastUpdated){trackingPreview.set(p.id,next);changed++;}
+   if(!previous||previous.status!==next.status||previous.lastUpdated!==next.lastUpdated||JSON.stringify(previous.events||[])!==JSON.stringify(next.events||[])){trackingPreview.set(p.id,next);changed++;}
    else unchanged++;
    cache[key]={...next,checkedAt:Date.now()};
    writeTrackingCache(cache);
@@ -522,10 +543,20 @@ function openSaleDialog(id=null,edit=false){
  saleForm.elements.salePrice.value=edit?p.salePrice:"";
  saleForm.elements.buyer.value=edit?p.buyer||"":"";
  saleForm.elements.paymentStatus.value=edit?p.paymentStatus||"Pendiente de cobro":"Pendiente de cobro";
+ saleForm.elements.paidAt.value=edit?azCalendarDate(p.paidAt||p.paymentDate||p.collectedAt)||"":"";
+ saleForm.elements.sentAt.value=edit?azCalendarDate(p.shipping?.sentAt||p.shipping?.shippedAt||p.shipping?.shippingDate)||"":"";
+ updatePaidDateVisibility(false);
  saleForm.elements.receivingAccount.value=edit?receiver(p)||"":normalizedAccount(p?.account)||"";
  $("#saleDialogTitle").textContent=edit?"Editar venta":"Registrar venta";
  updateSaleSummary();saleDialog.showModal();
 }
+function updatePaidDateVisibility(fill){
+ const paid=saleForm.elements.paymentStatus.value==="Cobrado";
+ document.getElementById("paidDateLabel").hidden=!paid;
+ saleForm.elements.paidAt.disabled=!paid;
+ if(paid&&fill&&!saleForm.elements.paidAt.value)saleForm.elements.paidAt.value=azToday();
+}
+saleForm.elements.paymentStatus.addEventListener("change",()=>updatePaidDateVisibility(true));
 function updateSaleSummary(){
  const p=products.find(x=>x.id===$("#saleProduct").value);
  const value=saleForm.elements.salePrice.value;
@@ -544,7 +575,15 @@ saleForm.addEventListener("submit",e=>{
  p.saleDate=saleForm.elements.saleDate.value;
  p.salePrice=saleForm.elements.salePrice.value;
  p.buyer=saleForm.elements.buyer.value.trim();
+ const wasPaid=p.paymentStatus==="Cobrado";
  p.paymentStatus=saleForm.elements.paymentStatus.value;
+ if(p.paymentStatus==="Cobrado"){
+  const date=saleForm.elements.paidAt.value||(!wasPaid?azToday():"");
+  if(date)p.paidAt=date;
+ }else{delete p.paidAt;delete p.paymentDate;delete p.collectedAt;}
+ p.shipping||={};
+ p.shipping.sentAt=saleForm.elements.sentAt.value||null;
+ if(!p.shipping.sentAt){delete p.shipping.shippedAt;delete p.shipping.shippingDate;}
  p.receivingAccount=saleForm.elements.receivingAccount.value;
  p.status="Vendido";
  save();saleDialog.close();activeTab="Ventas";render();
@@ -559,6 +598,7 @@ function cancelSale(id){
  delete p.saleDate;
  delete p.buyer;
  delete p.paymentStatus;
+ delete p.paidAt;delete p.paymentDate;delete p.collectedAt;
  delete p.receivingAccount;
  delete p.shipping;
  activeTab="Inventario";
@@ -571,14 +611,18 @@ function openShippingDialog(id){
  $("#shippingProductName").textContent=p.name;
  shippingForm.elements.carrier.value=p.shipping?.carrier||"";
  shippingForm.elements.trackingUrl.value=p.shipping?.trackingUrl||"";
+ shippingForm.elements.sentAt.value=azCalendarDate(p.shipping?.sentAt||p.shipping?.shippedAt||p.shipping?.shippingDate)||"";
  shippingDialog.showModal();
 }
+$("#markSentToday").onclick=()=>{shippingForm.elements.sentAt.value=azToday();};
 $("#closeShippingDialog").onclick=()=>shippingDialog.close();
 $("#cancelShippingDialog").onclick=()=>shippingDialog.close();
 shippingForm.addEventListener("submit",e=>{
  e.preventDefault();const p=products.find(x=>x.id===editingShipmentId);if(!p||!isSold(p))return;
  const f=new FormData(shippingForm);
  p.shipping={...(p.shipping||{}),carrier:String(f.get("carrier")||"").trim(),trackingNumber:p.shipping?.trackingNumber||"",trackingUrl:String(f.get("trackingUrl")||"").trim(),status:p.shipping?.status||"Pendiente de seguimiento",lastUpdated:p.shipping?.lastUpdated||null,events:Array.isArray(p.shipping?.events)?p.shipping.events:[]};
+ p.shipping.sentAt=String(f.get("sentAt")||"")||null;
+ if(!p.shipping.sentAt){delete p.shipping.shippedAt;delete p.shipping.shippingDate;}
  save();shippingDialog.close();
 });
 render();
@@ -750,3 +794,6 @@ document.getElementById("registerPushButton")?.addEventListener("click", async (
   } catch(error) { say("No se pudo activar: " + (error?.message || String(error))); }
   finally { button.disabled = false; }
 });
+
+// V9.45: preferencia visual local, independiente de los datos.
+(()=>{const root=document.documentElement,button=document.getElementById('azThemeToggle');if(!button)return;function apply(dark){root.dataset.theme=dark?'dark':'light';button.textContent=dark?'☀':'☾';button.setAttribute('aria-pressed',String(dark));button.setAttribute('aria-label',dark?'Activar modo claro':'Activar modo oscuro');button.title=button.getAttribute('aria-label');}apply(root.dataset.theme==='dark');button.addEventListener('click',()=>{const dark=root.dataset.theme!=='dark';apply(dark);try{localStorage.setItem('azores-theme',dark?'dark':'light')}catch(e){}});})();
