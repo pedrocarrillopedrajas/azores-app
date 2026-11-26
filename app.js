@@ -194,6 +194,8 @@ function stats(){
  if(f.total<=0){const cata=document.getElementById("cataCelebration");if(cata)cata.hidden=true;}
  document.getElementById("homePending").textContent=money(f.pending);
  document.getElementById("homeStock").textContent=products.filter(p=>!isSold(p)).length;
+ document.getElementById("homeSales").textContent=money(products.reduce((sum,p)=>sum+(isSold(p)?Number(p.salePrice)||0:0),0));
+ document.getElementById("homeProfit").textContent=money(f.profit);
 }
 function isSold(p){return p.salePrice!==""&&p.salePrice!=null}
 function productStatus(p){return isSold(p)?"Vendido":(p.status||"Sin vender")}
@@ -263,6 +265,7 @@ let azInventoryMode="cards";
 function azInventoryToolbar(rows){return `<div class="az-inventory-toolbar"><strong>${rows.length} productos · ${money(rows.reduce((n,p)=>n+(Number(p.purchasePrice)||0),0))} a coste</strong><div class="action-group"><button class="edit-product" data-inventory-mode="cards" aria-pressed="${azInventoryMode==="cards"}">▦ Tarjetas</button><button class="edit-product" data-inventory-mode="table" aria-pressed="${azInventoryMode==="table"}">☰ Tabla</button></div></div>`;}
 $("#view").addEventListener("click",e=>{const b=e.target.closest("[data-inventory-mode]");if(b){azInventoryMode=b.dataset.inventoryMode;render();}});
 function render(){
+ document.documentElement.dataset.section=activeTab;
  queueMicrotask(()=>hydrateStoredPhotos(document));
  stats();azRenderGoals();azRenderCalendar();$("#sectionTitle").textContent=activeTab;
  const home=activeTab==="Inicio";azRenderRecent(home);$("#azGoals").hidden=!home;
